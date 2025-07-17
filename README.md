@@ -2,7 +2,7 @@
 
 ## Installation
 
-To use the EDI Parser, you'll need to have Python 3 installed on your system. You can download the latest version of Python from the official website: [https://www.python.org/downloads/](https://www.python.org/downloads/).
+To use the EDI Parser, you'll need to have Python 3 (3.12 recommended, do to compilation issues) installed on your system. You can download the latest version of Python from the official website: [https://www.python.org/downloads/](https://www.python.org/downloads/).
 
 Once you have Python installed, you can install the required dependencies by running the following command in your terminal or command prompt:
 
