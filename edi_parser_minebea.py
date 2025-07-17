@@ -125,7 +125,7 @@ class EDIDelforParser:
             else:
                 return date_str.split(' ')[0]  # Return only date part if time is present
         except Exception as e:
-            print(f"Error parsing date {date_str} with format {format_code}: {e}")
+            messagebox.showerror("Chyba", f"Chyba při parsování data {date_str} s formátem {format_code}: {e}")
             return date_str.split(' ')[0] if date_str else ''
     
     def parse_edi_datetime(self, datetime_str):
@@ -194,9 +194,6 @@ class EDIDelforParser:
                     role = parts[1]
                     code = parts[2] if len(parts) > 2 else ''
                     
-                    # Debug - vypíšeme co parsujeme
-                    print(f"NAD Debug - Role: {role}, Code: {code}, Parts: {parts}")
-                    
                     # Název společnosti je v parts[4] (index 4)
                     name = parts[4] if len(parts) > 4 else ''
                     
@@ -214,9 +211,7 @@ class EDIDelforParser:
                             self.partner_info['Kupující'] += f", {full_address}"
                     elif role == 'SE':
                         # Zkontrolujeme, zda SE obsahuje kód příjemce z UNB
-                        print(f"SE Debug - Checking code: {code}, name: {name}")
-                        if '1000500120' in code:
-                            print(f"Found matching code! Setting recipient to: {name}")
+                        if code == self.header_info.get('Příjemce_kód', ''):
                             self.header_info['Příjemce'] = name
                         
                         # Pro prodávajícího použijeme název + adresu
@@ -320,7 +315,7 @@ class EDIDelforParser:
                 info_content += f"Příjemce: {self.header_info['Příjemce_kód']}\n"
         except Exception as e:
             # Skip if there's an error during display
-            print(f"Error displaying data: {e}")
+            messagebox.showerror("Chyba", f"Chyba při zobrazování dat: {e}")
             return
         
         info_content += "\n=== INFORMACE O PARTNERECH ===\n"
@@ -382,7 +377,7 @@ class EDIDelforParser:
             week_num = dt.isocalendar()[1]
             return week_num
         except Exception as e:
-            print(f"Error getting week number from {date_str}: {e}")
+            # Log error silently
             return ""
 
     def export_to_excel(self):
@@ -446,29 +441,40 @@ class EDIDelforParser:
                         date_from_obj = datetime.strptime(date_from, '%d.%m.%Y')
                         ws.cell(row=row_num, column=2, value=date_from_obj).number_format = 'DD.MM.YYYY'
                 except Exception as e:
-                    print(f"Error formatting date: {e}")
+                    # Log error silently
                     ws.cell(row=row_num, column=2, value=date_from.split(' ')[0] if date_from else '')
                 
-                # Add other data with proper number formatting
-                ws.cell(row=row_num, column=3, value=quantity)  # Use formatted quantity
-                ws.cell(row=row_num, column=4, value=delivery.get('Typ', ''))
-                # Use SCC description instead of code
+                # Add other data with proper formatting
+                # Format quantity as number
+                try:
+                    if isinstance(quantity, (int, float)):
+                        qty_value = float(quantity)
+                    else:
+                        qty_str = str(quantity).strip().replace("'", "")
+                        qty_value = float(qty_str) if qty_str.replace('.', '', 1).isdigit() else 0.0
+                    ws.cell(row=row_num, column=3, value=qty_value)
+                except (ValueError, AttributeError):
+                    ws.cell(row=row_num, column=3, value=0.0)
+                
+                # Format text columns as text
+                ws.cell(row=row_num, column=4, value=str(delivery.get('Typ', ''))).number_format = '@'  # Typ as text
+                
+                # Use SCC description instead of code and format as text
                 scc_desc = self.get_scc_description(str(scc))
-                ws.cell(row=row_num, column=5, value=scc_desc)
-                ws.cell(row=row_num, column=6, value=self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')  # Add delivery location
+                ws.cell(row=row_num, column=5, value=str(scc_desc)).number_format = '@'  # SCC as text
+                
+                # Format delivery location as text
+                ws.cell(row=row_num, column=6, value=str(self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')).number_format = '@'
                 row_num += 1
 
-            # Apply number formatting to all numeric columns
-            for col in range(1, 8):
-                for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
-                    for cell in row:
-                        if isinstance(cell.value, (int, float)):
-                            if col == 1:  # Week number
-                                cell.number_format = '0'
-                            elif col == 4:  # Quantity
-                                cell.number_format = '0'
-                            elif col == 6:  # SCC
-                                cell.number_format = '0'
+            # Apply number formatting to numeric columns
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                # Format quantity column (column 3) as number with no decimal places
+                if row[2].value is not None:  # Column 3 (0-based index 2)
+                    row[2].number_format = '0'
+                # Format week number column (column 1) as number with no decimal places
+                if row[0].value is not None:  # Column 1 (0-based index 0)
+                    row[0].number_format = '0'
             
             # Automatické přizpůsobení šířky sloupců
             for col in ws.columns:

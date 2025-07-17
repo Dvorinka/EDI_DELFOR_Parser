@@ -502,7 +502,7 @@ class EDIDelforCumminsParser:
                 date_obj = datetime.strptime(date_str, '%Y%m%d').date()
             return date_obj.isocalendar()[1]  # Returns ISO week number
         except Exception as e:
-            print(f"Error parsing date {date_str}: {e}")
+            # Log error silently
             return ""
 
     def export_to_excel(self):
@@ -556,16 +556,22 @@ class EDIDelforCumminsParser:
                 # Format part number as number if possible
                 part_number = item.get('Položka', '')
                 try:
-                    part_number = int(part_number) if part_number.strip() else ''
-                except (ValueError, AttributeError):
-                    pass
+                    if str(part_number).strip():  # Only convert if not empty
+                        part_number = int(part_number)
+                    else:
+                        part_number = None
+                except (ValueError, AttributeError, TypeError):
+                    part_number = str(part_number)  # Keep as string if can't convert to int
                 
                 # Format release as number if possible
                 release = item.get('Release', '')
                 try:
-                    release = int(release) if release.strip() else ''
-                except (ValueError, AttributeError):
-                    pass
+                    if str(release).strip():  # Only convert if not empty
+                        release = int(release)
+                    else:
+                        release = None
+                except (ValueError, AttributeError, TypeError):
+                    release = str(release)  # Keep as string if can't convert to int
                 
                 # Add week number and date in the first two columns
                 ws.cell(row=row_num, column=1, value=week_num)
@@ -581,29 +587,56 @@ class EDIDelforCumminsParser:
                 except (ValueError, TypeError):
                     ws.cell(row=row_num, column=2, value=date_str)
                 
-                # Add other data with proper number formatting
-                ws.cell(row=row_num, column=3, value=part_number)
-                ws.cell(row=row_num, column=4, value=item.get('Popis', ''))
-                ws.cell(row=row_num, column=5, value=quantity)  # Use formatted quantity
-                ws.cell(row=row_num, column=6, value=item.get('Typ', ''))
-                ws.cell(row=row_num, column=7, value=item.get('SCC', ''))
-                ws.cell(row=row_num, column=8, value=release)
-                ws.cell(row=row_num, column=9, value=self.partner_info.get('Dodací adresa', ''))  # Add delivery location from partner info
+                # Part number - format as number if possible
+                if part_number is not None and part_number != '':
+                    if isinstance(part_number, (int, float)):
+                        ws.cell(row=row_num, column=3, value=part_number).number_format = '0'
+                    else:
+                        ws.cell(row=row_num, column=3, value=str(part_number)).number_format = '@'  # Text format if not a number
+                else:
+                    ws.cell(row=row_num, column=3, value='')
+                
+                # Format text columns as text
+                ws.cell(row=row_num, column=4, value=str(item.get('Popis', ''))).number_format = '@'  # Popis as text
+                ws.cell(row=row_num, column=5, value=quantity)  # Quantity as number
+                ws.cell(row=row_num, column=6, value=str(item.get('Typ', ''))).number_format = '@'  # Typ as text
+                ws.cell(row=row_num, column=7, value=str(item.get('SCC', ''))).number_format = '@'  # SCC as text
+                
+                # Release - format as number if possible
+                if release is not None and release != '':
+                    if isinstance(release, (int, float)):
+                        ws.cell(row=row_num, column=8, value=release).number_format = '0'
+                    else:
+                        ws.cell(row=row_num, column=8, value=str(release)).number_format = '@'  # Text format if not a number
+                else:
+                    ws.cell(row=row_num, column=8, value='')
+                    
+                # Get delivery location - ensure we have a non-empty string
+                dodaci_misto = str(self.partner_info.get('Dodací adresa', '') or '').strip()
+                ws.cell(row=row_num, column=9, value=dodaci_misto).number_format = '@'  # Dodací místo as text
                 row_num += 1
 
-            # Apply number formatting to all numeric columns
-            for col in range(1, 10):
-                for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
-                    for cell in row:
-                        if isinstance(cell.value, (int, float)):
-                            if col == 1:  # Week number
-                                cell.number_format = '0'
-                            elif col == 3:  # Part number
-                                cell.number_format = '0'
-                            elif col == 5:  # Quantity
-                                cell.number_format = '0'
-                            elif col == 8:  # Release
-                                cell.number_format = '0'
+            # Apply number formatting to numeric columns
+            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                # Format week number (column 1) as number with no decimal places
+                if row[0].value is not None and row[0].value != '':  # Column 1 (0-based index 0)
+                    if isinstance(row[0].value, (int, float)):
+                        row[0].number_format = '0'
+                    
+                # Format quantity (column 5) as number with no decimal places
+                if row[4].value is not None and row[4].value != '':  # Column 5 (0-based index 4)
+                    if isinstance(row[4].value, (int, float)):
+                        row[4].number_format = '0'
+                        
+                # Format part number (column 3) as number with no decimal places if it's a number
+                if row[2].value is not None and row[2].value != '':  # Column 3 (0-based index 2)
+                    if isinstance(row[2].value, (int, float)):
+                        row[2].number_format = '0'
+                        
+                # Format release (column 8) as number with no decimal places if it's a number
+                if row[7].value is not None and row[7].value != '':  # Column 8 (0-based index 7)
+                    if isinstance(row[7].value, (int, float)):
+                        row[7].number_format = '0'
             
             # Auto-adjust column widths
             for col in ws.columns:

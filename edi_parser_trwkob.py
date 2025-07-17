@@ -315,11 +315,13 @@ class EDITrwkobParser:
                 except (ValueError, TypeError):
                     ws.cell(row=row_num, column=2, value=date_str)
                 
-                # Add other data with proper number formatting
-                ws.cell(row=row_num, column=3, value=quantity)  # Use formatted quantity
-                ws.cell(row=row_num, column=4, value=delivery.get('Typ', ''))
-                ws.cell(row=row_num, column=5, value=scc_desc)  # Use SCC description
-                ws.cell(row=row_num, column=6, value=self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')  # Add delivery location
+                # Add other data with proper formatting
+                ws.cell(row=row_num, column=3, value=quantity)  # Quantity as number
+                
+                # Format text columns as text
+                ws.cell(row=row_num, column=4, value=str(delivery.get('Typ', ''))).number_format = '@'  # Typ as text
+                ws.cell(row=row_num, column=5, value=str(scc_desc)).number_format = '@'  # SCC as text
+                ws.cell(row=row_num, column=6, value=str(self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')).number_format = '@'  # Dodací místo as text
                 row_num += 1
 
             # Apply number formatting to numeric columns
@@ -348,8 +350,8 @@ class EDITrwkobParser:
                 adjusted_width = (max_length + 2)
                 ws.column_dimensions[column_letter].width = min(adjusted_width, 30)
 
-            # Save the file
-            filename = f"dodavky_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            # Save the file with trwkob in the name
+            filename = f"dodavky_trwkob_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             filepath = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
