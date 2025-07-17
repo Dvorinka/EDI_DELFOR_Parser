@@ -29,9 +29,24 @@ class EDIDelforCumminsParser:
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
-        # Add buttons
-        ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(btn_frame, text="Export do Excelu", command=self.export_to_excel).pack(side=tk.LEFT, padx=5)
+        # Style configuration for buttons
+        style = ttk.Style()
+        style.configure('Excel.TButton', 
+                       background='#217346',  # Excel green color
+                       foreground='white', 
+                       font=('Segoe UI', 10, 'bold'),
+                       padding=5)
+        
+        # Add buttons with padding and styling
+        btn_back = ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main)
+        btn_export = ttk.Button(btn_frame, 
+                              text="📊 Export do Excelu", 
+                              command=self.export_to_excel, 
+                              style='Excel.TButton')
+        
+        # Pack buttons with padding
+        btn_back.pack(side=tk.LEFT, padx=(0, 5))
+        btn_export.pack(side=tk.LEFT)
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True)
         self.info_frame = ttk.Frame(self.notebook)

@@ -35,8 +35,25 @@ class EDIDelforParser:
         # Tlačítka pro ovládání
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Button(btn_frame, text="Export do Excelu", command=self.export_to_excel).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Styly pro tlačítka
+        style = ttk.Style()
+        style.configure('Excel.TButton', 
+                      background='#217346',  # Excel zelená barva
+                      foreground='white', 
+                      font=('Segoe UI', 10, 'bold'),
+                      padding=5)
+        
+        # Vytvoření tlačítek s odsazením a styly
+        btn_back = ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main)
+        btn_export = ttk.Button(btn_frame, 
+                              text="📊 Export do Excelu", 
+                              command=self.export_to_excel, 
+                              style='Excel.TButton')
+        
+        # Uspořádání tlačítek s odsazením
+        btn_back.pack(side=tk.LEFT, padx=(0, 5))
+        btn_export.pack(side=tk.LEFT)
         
         # Notebook pro záložky
         self.notebook = ttk.Notebook(main_frame)
@@ -247,15 +264,15 @@ class EDIDelforParser:
                         quantity = qty_parts[1]
                         unit = qty_parts[2]
                         
-                        if qty_type == '113':  # Cumulative quantity
+                        if qty_type == '113':  # Plánované množství k dodání
                             current_delivery['Množství'] = quantity
                             current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Kumulativní'
-                        elif qty_type == '70':  # Minimum quantity
+                            current_delivery['Typ'] = 'Plánované množství'
+                        elif qty_type == '70':  # Minimální množství
                             current_delivery['Množství'] = quantity
                             current_delivery['Jednotka'] = unit
                             current_delivery['Typ'] = 'Minimální'
-                        elif qty_type == '78':  # Maximum quantity
+                        elif qty_type == '78':  # Maximální množství
                             current_delivery['Množství'] = quantity
                             current_delivery['Jednotka'] = unit
                             current_delivery['Typ'] = 'Maximální'

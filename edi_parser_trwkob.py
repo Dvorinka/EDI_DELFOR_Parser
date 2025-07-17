@@ -22,8 +22,25 @@ class EDITrwkobParser:
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Button(btn_frame, text="Export do Excelu", command=self.export_to_excel).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Styly pro tlačítka
+        style = ttk.Style()
+        style.configure('Excel.TButton', 
+                      background='#217346',  # Excel zelená barva
+                      foreground='white', 
+                      font=('Segoe UI', 10, 'bold'),
+                      padding=5)
+        
+        # Vytvoření tlačítek s odsazením a styly
+        btn_back = ttk.Button(btn_frame, text="Zpět na hlavní okno", command=self.back_to_main)
+        btn_export = ttk.Button(btn_frame, 
+                              text="📊 Export do Excelu", 
+                              command=self.export_to_excel, 
+                              style='Excel.TButton')
+        
+        # Uspořádání tlačítek s odsazením
+        btn_back.pack(side=tk.LEFT, padx=(0, 5))
+        btn_export.pack(side=tk.LEFT)
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True)
         self.info_frame = ttk.Frame(self.notebook)
@@ -48,11 +65,16 @@ class EDITrwkobParser:
     def setup_delivery_tab(self):
         tree_frame = ttk.Frame(self.delivery_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        columns = ('Datum od', 'Datum do', 'Množství', 'Typ', 'SCC')
+        columns = ('Datum od', 'Množství', 'Typ', 'SCC')
         self.delivery_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=15)
+        # Set column widths
+        self.delivery_tree.column('Datum od', width=100)
+        self.delivery_tree.column('Množství', width=100)
+        self.delivery_tree.column('Typ', width=150)
+        self.delivery_tree.column('SCC', width=200)
+        # Set column headings
         for col in columns:
             self.delivery_tree.heading(col, text=col)
-            self.delivery_tree.column(col, width=120)
         v_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.delivery_tree.yview)
         h_scrollbar = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.delivery_tree.xview)
         self.delivery_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
@@ -109,20 +131,30 @@ class EDITrwkobParser:
         self.partner_info = {}
         self.delivery_schedules = []
         current_delivery = {}
+        
+        # Helper function to add a delivery if it's complete
+        def add_delivery_if_complete(delivery):
+            if all(key in delivery for key in ['Datum od', 'Množství', 'Typ', 'SCC']):
+                # Add the delivery - we'll handle duplicates later
+                self.delivery_schedules.append(delivery.copy())
+        
         for line in lines:
             line = line.strip()
             if not line:
                 continue
+                
             if line.startswith('UNB'):
                 parts = line.split('+')
                 if len(parts) >= 5:
                     self.header_info['Odesílatel'] = parts[2]
                     self.header_info['Příjemce_kód'] = parts[3]
                     self.header_info['Datum/Čas'] = self.parse_edi_datetime(parts[4])
+                    
             elif line.startswith('BGM'):
                 parts = line.split('+')
                 if len(parts) >= 3:
                     self.header_info['Číslo zprávy'] = parts[2]
+                    
             elif line.startswith('DTM'):
                 parts = line.split('+')
                 if len(parts) >= 2:
@@ -131,10 +163,12 @@ class EDITrwkobParser:
                         date_formatted = self.parse_date(dtm_parts[1], dtm_parts[2] if len(dtm_parts) > 2 else '')
                         if dtm_parts[0] == '137':
                             self.header_info['Datum dokumentu'] = date_formatted
-                        elif dtm_parts[0] == '63':
-                            current_delivery['Datum do'] = date_formatted
-                        elif dtm_parts[0] == '64':
+                        elif dtm_parts[0] == '64':  # Start date
                             current_delivery['Datum od'] = date_formatted
+                        elif dtm_parts[0] == '63':  # End date (we'll use this if no start date)
+                            if 'Datum od' not in current_delivery:
+                                current_delivery['Datum od'] = date_formatted
+                    
             elif line.startswith('NAD'):
                 parts = line.split('+')
                 if len(parts) >= 3:
@@ -147,58 +181,93 @@ class EDITrwkobParser:
                             address_parts.append(parts[i])
                     full_address = ', '.join(address_parts) if address_parts else ''
                     if role == 'BY':
-                        # Kupující: prefer name, fallback to code
                         self.partner_info['Kupující'] = name if name else code
                         if full_address:
                             self.partner_info['Kupující'] += f", {full_address}"
                     elif role == 'SE':
-                        # Prodávající: prefer name, fallback to code
                         self.header_info['Příjemce'] = name if name else code
                         if full_address:
                             self.partner_info['Prodávající'] = f"{name if name else code}, {full_address}"
                         else:
                             self.partner_info['Prodávající'] = name if name else code
                     elif role == 'CN':
-                        # Dodací adresa: show code if name missing
                         if full_address:
                             self.partner_info['Dodací adresa'] = f"{name if name else code}, {full_address}"
                         else:
                             self.partner_info['Dodací adresa'] = name if name else code
+                            
             elif line.startswith('LIN'):
                 parts = line.split('+')
                 if len(parts) >= 4:
                     self.header_info['Číslo položky'] = parts[3]
+                    
             elif line.startswith('PIA'):
                 parts = line.split('+')
                 if len(parts) >= 3:
                     self.header_info['Kód produktu'] = parts[2]
+                    
             elif line.startswith('QTY'):
                 parts = line.split('+')
                 if len(parts) >= 2:
                     qty_parts = parts[1].split(':')
-                    if len(qty_parts) >= 3:
+                    if qty_parts:
                         qty_type = qty_parts[0]
-                        quantity = qty_parts[1]
-                        unit = qty_parts[2]
-                        if qty_type == '113':
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Kumulativní'
-                        elif qty_type == '70':
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Minimální'
-                        elif qty_type == '78':
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Maximální'
+                        quantity = qty_parts[1] if len(qty_parts) > 1 else ''
+                        unit = qty_parts[2] if len(qty_parts) > 2 else 'PCE'  # Default to PCE if not specified
+                        
+                        # Only process QTY if we have a date and SCC
+                        if 'Datum od' in current_delivery and 'SCC' in current_delivery:
+                            if qty_type in ['113', '12']:  # Plánované množství k dodání
+                                current_delivery['Množství'] = quantity
+                                current_delivery['Jednotka'] = unit
+                                current_delivery['Typ'] = 'Plánované množství'
+                                add_delivery_if_complete(current_delivery)
+                                
+                            elif qty_type == '70':
+                                current_delivery['Množství'] = quantity
+                                current_delivery['Jednotka'] = unit
+                                current_delivery['Typ'] = 'Minimální'
+                                add_delivery_if_complete(current_delivery)
+                                
+                            elif qty_type == '78':
+                                current_delivery['Množství'] = quantity
+                                current_delivery['Jednotka'] = unit
+                                current_delivery['Typ'] = 'Maximální'
+                                add_delivery_if_complete(current_delivery)
+            
             elif line.startswith('SCC'):
+                # Add the previous delivery if it's complete
+                if all(key in current_delivery for key in ['Datum od', 'Množství', 'Typ', 'SCC']):
+                    add_delivery_if_complete(current_delivery)
+                
                 parts = line.split('+')
                 if len(parts) >= 2:
-                    current_delivery['SCC'] = parts[1]
-                    if 'Datum od' in current_delivery and 'Množství' in current_delivery:
-                        self.delivery_schedules.append(current_delivery.copy())
-                        current_delivery = {'SCC': parts[1]}
+                    # Start a new delivery with the SCC code
+                    current_delivery = {'SCC': parts[1]}
+                    
+            # Handle end of delivery schedule
+            elif line.startswith('UNS+S'):
+                if all(key in current_delivery for key in ['Datum od', 'Množství', 'Typ', 'SCC']):
+                    add_delivery_if_complete(current_delivery)
+        
+        # After processing all lines, remove exact duplicates
+        unique_deliveries = []
+        seen = set()
+        for delivery in self.delivery_schedules:
+            # Create a unique key based on all fields
+            delivery_key = (
+                delivery.get('Datum od', ''),
+                delivery.get('Množství', ''),
+                delivery.get('Typ', ''),
+                delivery.get('SCC', ''),
+                delivery.get('Jednotka', '')
+            )
+            if delivery_key not in seen:
+                seen.add(delivery_key)
+                unique_deliveries.append(delivery)
+        
+        # Replace the delivery schedules with the deduplicated list
+        self.delivery_schedules = unique_deliveries
 
     def display_data(self):
         self.info_text.delete(1.0, tk.END)
@@ -212,14 +281,45 @@ class EDITrwkobParser:
         for key, value in self.partner_info.items():
             info_content += f"{key}: {value}\n"
         self.info_text.insert(1.0, info_content)
+        
+        # Clear the tree
         for item in self.delivery_tree.get_children():
             self.delivery_tree.delete(item)
+            
+        # Process all deliveries without deduplication
+        deliveries_to_display = []
+        
+        # Filter out 'Maximální' and 'Minimální' types
         for delivery in self.delivery_schedules:
+            delivery_type = delivery.get('Typ', '')
+            # Skip 'Maximální' and 'Minimální' types
+            if delivery_type in ['Maximální', 'Minimální']:
+                continue
+                
+            date_from = delivery.get('Datum od', '')
+            quantity = delivery.get('Množství', '')
+            
+            # Skip if any required field is missing
+            if not (date_from and quantity):
+                continue
+                
+            # Convert date strings to datetime objects for sorting
+            try:
+                date_obj = datetime.strptime(date_from, '%d.%m.%Y')
+                deliveries_to_display.append((date_obj, delivery))
+            except (ValueError, TypeError):
+                # If date parsing fails, keep the original order
+                deliveries_to_display.append((datetime.max, delivery))
+        
+        # Sort deliveries by date (from oldest to newest)
+        deliveries_to_display.sort(key=lambda x: x[0])
+        
+        # Add all deliveries to the tree
+        for date_obj, delivery in deliveries_to_display:
             scc_code = delivery.get('SCC', '')
             scc_desc = self.get_scc_description(scc_code)
             self.delivery_tree.insert('', tk.END, values=(
                 delivery.get('Datum od', ''),
-                delivery.get('Datum do', ''),
                 delivery.get('Množství', ''),
                 delivery.get('Typ', ''),
                 scc_desc
@@ -262,12 +362,49 @@ class EDITrwkobParser:
         return scc_mapping.get(scc_code, f'Neznámý kód: {scc_code}')
 
     def export_to_excel(self):
-        """Export delivery data to Excel with calendar weeks"""
+        """Export delivery data to Excel with calendar weeks, sorted chronologically and without duplicates"""
         if not self.delivery_schedules:
             messagebox.showwarning("Upozornění", "Žádná data k exportu")
             return
 
         try:
+            # Process all deliveries without deduplication
+            processed_deliveries = []
+            
+            for delivery in self.delivery_schedules:
+                date_str = delivery.get('Datum od', '')
+                delivery_type = delivery.get('Typ', '')
+                
+                # Skip 'Maximální' and 'Minimální' types and empty dates
+                if not date_str or delivery_type in ['Maximální', 'Minimální']:
+                    continue
+                    
+                try:
+                    # Parse date
+                    date_obj = datetime.strptime(date_str, '%d.%m.%Y').date()
+                    
+                    # Get delivery details
+                    quantity = delivery.get('Množství', '').strip("'")
+                    scc_code = delivery.get('SCC', '')
+                    
+                    # Store with date object and original delivery for sorting
+                    processed_deliveries.append((date_obj, {
+                        'date_str': date_str,
+                        'quantity': quantity,
+                        'type': delivery_type,
+                        'scc_code': scc_code,
+                        'scc_desc': self.get_scc_description(scc_code),
+                        'delivery': delivery
+                    }))
+                    
+                except (ValueError, TypeError) as e:
+                    print(f"Chyba při zpracování data: {date_str}, {e}")
+                    continue
+            
+            # Sort by date (earliest first)
+            processed_deliveries.sort(key=lambda x: x[0])
+            
+            # Create Excel workbook and worksheet
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Dodávky"
@@ -281,47 +418,28 @@ class EDITrwkobParser:
 
             # Data
             row_num = 2
-            for delivery in self.delivery_schedules:
-                date_str = delivery.get('Datum od', '')
-                week_num = self.get_week_number(date_str) if date_str else ""
-                scc_code = delivery.get('SCC', '')
-                scc_desc = self.get_scc_description(scc_code)
+            for date_obj, delivery_data in processed_deliveries:
+                # Add week number (ISO week)
+                ws.cell(row=row_num, column=1, value=date_obj.isocalendar()[1])
                 
-                # Format week number as number
+                # Add date with proper Excel formatting
+                ws.cell(row=row_num, column=2, value=date_obj).number_format = 'DD.MM.YYYY'
+                
+                # Add quantity as number
                 try:
-                    week_num = int(week_num) if week_num else 0
+                    quantity = float(delivery_data['quantity']) if delivery_data['quantity'] else 0
+                    ws.cell(row=row_num, column=3, value=quantity)
                 except (ValueError, TypeError):
-                    week_num = 0
+                    ws.cell(row=row_num, column=3, value=delivery_data['quantity'])
                 
-                # Format quantity as number, removing any leading quotes
-                quantity = delivery.get('Množství', '')
-                if isinstance(quantity, str):
-                    quantity = quantity.strip("'")
-                    try:
-                        quantity = float(quantity) if quantity else 0
-                    except (ValueError, TypeError):
-                        quantity = delivery.get('Množství', '')
+                # Add type and SCC description as text
+                ws.cell(row=row_num, column=4, value=delivery_data['type']).number_format = '@'
+                ws.cell(row=row_num, column=5, value=delivery_data['scc_desc']).number_format = '@'
                 
-                # Add week number
-                ws.cell(row=row_num, column=1, value=week_num)
+                # Add delivery address
+                delivery_address = self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927'
+                ws.cell(row=row_num, column=6, value=delivery_address).number_format = '@'
                 
-                # Format date as Excel date
-                try:
-                    if date_str:
-                        date_obj = datetime.strptime(date_str, '%d.%m.%Y')
-                        ws.cell(row=row_num, column=2, value=date_obj).number_format = 'DD.MM.YYYY'
-                    else:
-                        ws.cell(row=row_num, column=2, value='')
-                except (ValueError, TypeError):
-                    ws.cell(row=row_num, column=2, value=date_str)
-                
-                # Add other data with proper formatting
-                ws.cell(row=row_num, column=3, value=quantity)  # Quantity as number
-                
-                # Format text columns as text
-                ws.cell(row=row_num, column=4, value=str(delivery.get('Typ', ''))).number_format = '@'  # Typ as text
-                ws.cell(row=row_num, column=5, value=str(scc_desc)).number_format = '@'  # SCC as text
-                ws.cell(row=row_num, column=6, value=str(self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')).number_format = '@'  # Dodací místo as text
                 row_num += 1
 
             # Apply number formatting to numeric columns
