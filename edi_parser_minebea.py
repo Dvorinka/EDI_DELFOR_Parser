@@ -161,18 +161,18 @@ class EDIDelforParser:
     
     def parse_edi_file(self, content):
         """Parsuje EDI DELFOR soubor"""
-        lines = content.strip().split("'")
+        lines = [line.strip() for line in content.strip().split("'") if line.strip()]
         
         # Reset dat
         self.header_info = {}
         self.partner_info = {}
         self.delivery_schedules = []
         
-        current_delivery = {}
-        
-        for line in lines:
-            line = line.strip()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
             if not line:
+                i += 1
                 continue
                 
             # UNB - Interchange header
@@ -180,29 +180,16 @@ class EDIDelforParser:
                 parts = line.split('+')
                 if len(parts) >= 5:
                     self.header_info['Odesílatel'] = parts[2]
-                    # Uložíme kód příjemce, název doplníme později z NAD segmentu
                     self.header_info['Příjemce_kód'] = parts[3]
                     self.header_info['Datum/Čas'] = self.parse_edi_datetime(parts[4])
+                i += 1
                     
             # BGM - Beginning of message
             elif line.startswith('BGM'):
                 parts = line.split('+')
                 if len(parts) >= 3:
                     self.header_info['Číslo zprávy'] = parts[2]
-                    
-            # DTM - Date/time
-            elif line.startswith('DTM'):
-                parts = line.split('+')
-                if len(parts) >= 2:
-                    dtm_parts = parts[1].split(':')
-                    if len(dtm_parts) >= 3:
-                        date_formatted = self.parse_date(dtm_parts[1], dtm_parts[2])
-                        if dtm_parts[0] == '137':
-                            self.header_info['Datum dokumentu'] = date_formatted
-                        elif dtm_parts[0] == '63':
-                            current_delivery['Datum do'] = date_formatted
-                        elif dtm_parts[0] == '64':
-                            current_delivery['Datum od'] = date_formatted
+                i += 1
                             
             # NAD - Name and address
             elif line.startswith('NAD'):
@@ -210,15 +197,13 @@ class EDIDelforParser:
                 if len(parts) >= 3:
                     role = parts[1]
                     code = parts[2] if len(parts) > 2 else ''
-                    
-                    # Název společnosti je v parts[4] (index 4)
                     name = parts[4] if len(parts) > 4 else ''
                     
-                    # Adresa začíná od parts[5]
+                    # Process address parts
                     address_parts = []
-                    for i in range(5, len(parts)):
-                        if parts[i]:  # Přidáme pouze neprázdné části
-                            address_parts.append(parts[i])
+                    for j in range(5, len(parts)):
+                        if parts[j]:
+                            address_parts.append(parts[j])
                     
                     full_address = ', '.join(address_parts) if address_parts else ''
                     
@@ -227,11 +212,9 @@ class EDIDelforParser:
                         if full_address:
                             self.partner_info['Kupující'] += f", {full_address}"
                     elif role == 'SE':
-                        # Zkontrolujeme, zda SE obsahuje kód příjemce z UNB
                         if code == self.header_info.get('Příjemce_kód', ''):
                             self.header_info['Příjemce'] = name
                         
-                        # Pro prodávajícího použijeme název + adresu
                         if full_address:
                             self.partner_info['Prodávající'] = f"{name}, {full_address}"
                         else:
@@ -241,52 +224,77 @@ class EDIDelforParser:
                             self.partner_info['Dodací adresa'] = f"{name}, {full_address}"
                         else:
                             self.partner_info['Dodací adresa'] = name
+                i += 1
                         
             # LIN - Line item
             elif line.startswith('LIN'):
                 parts = line.split('+')
                 if len(parts) >= 4:
                     self.header_info['Číslo položky'] = parts[3]
+                i += 1
                     
             # PIA - Product identification
             elif line.startswith('PIA'):
                 parts = line.split('+')
                 if len(parts) >= 3:
                     self.header_info['Kód produktu'] = parts[2]
+                i += 1
+                
+            # Handle delivery block (4 lines in specific order: QTY+113, SCC, DTM+63, DTM+64)
+            elif line.startswith('QTY+113'):
+                try:
+                    # Create new delivery record
+                    current_delivery = {}
                     
-            # QTY - Quantity
-            elif line.startswith('QTY'):
-                parts = line.split('+')
-                if len(parts) >= 2:
-                    qty_parts = parts[1].split(':')
-                    if len(qty_parts) >= 3:
-                        qty_type = qty_parts[0]
-                        quantity = qty_parts[1]
-                        unit = qty_parts[2]
-                        
-                        if qty_type == '113':  # Plánované množství k dodání
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
+                    # 1. Process QTY+113 line (current line)
+                    qty_parts = line.split('+')
+                    if len(qty_parts) >= 2:
+                        qty_info = qty_parts[1].split(':')
+                        if len(qty_info) >= 3:
+                            current_delivery['Množství'] = qty_info[1]
+                            current_delivery['Jednotka'] = qty_info[2]
                             current_delivery['Typ'] = 'Plánované množství'
-                        elif qty_type == '70':  # Minimální množství
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Minimální'
-                        elif qty_type == '78':  # Maximální množství
-                            current_delivery['Množství'] = quantity
-                            current_delivery['Jednotka'] = unit
-                            current_delivery['Typ'] = 'Maximální'
-                            
-            # SCC - Scheduling conditions
-            elif line.startswith('SCC'):
-                parts = line.split('+')
-                if len(parts) >= 2:
-                    current_delivery['SCC'] = parts[1]
                     
-                    # Pokud máme kompletní dodávku, přidáme ji
-                    if 'Datum od' in current_delivery and 'Množství' in current_delivery:
+                    # Move to next line
+                    i += 1
+                    if i >= len(lines):
+                        break
+                        
+                    # 2. Process SCC line (next line)
+                    if lines[i].startswith('SCC'):
+                        scc_parts = lines[i].split('+')
+                        if len(scc_parts) >= 2:
+                            current_delivery['SCC'] = scc_parts[1]
+                        i += 1
+                        
+                        # 3. Process DTM+63 line (end date)
+                        if i < len(lines) and lines[i].startswith('DTM+63'):
+                            dtm_parts = lines[i].split('+')
+                            if len(dtm_parts) >= 2:
+                                dtm_info = dtm_parts[1].split(':')
+                                if len(dtm_info) >= 3:
+                                    current_delivery['Datum do'] = self.parse_date(dtm_info[1], dtm_info[2])
+                            i += 1
+                            
+                            # 4. Process DTM+64 line (start date)
+                            if i < len(lines) and lines[i].startswith('DTM+64'):
+                                dtm_parts = lines[i].split('+')
+                                if len(dtm_parts) >= 2:
+                                    dtm_info = dtm_parts[1].split(':')
+                                    if len(dtm_info) >= 3:
+                                        current_delivery['Datum od'] = self.parse_date(dtm_info[1], dtm_info[2])
+                                i += 1
+                    
+                    # Add completed delivery to schedules
+                    if 'Množství' in current_delivery and 'Datum od' in current_delivery:
                         self.delivery_schedules.append(current_delivery.copy())
-                        current_delivery = {'SCC': parts[1]}  # Zachováme SCC pro další dodávky
+                
+                except Exception as e:
+                    print(f"Error processing delivery block: {e}")
+                    i += 1  # Skip to next line on error
+            else:
+                # Skip any other lines we don't process
+                i += 1
     
     def load_file(self, filepath):
         """Načte EDI soubor"""
@@ -408,90 +416,94 @@ class EDIDelforParser:
             ws = wb.active
             ws.title = "Dodávky"
 
-            # Hlavičky
-            headers = ["Týden", "Datum od", "Množství", "Typ", "SCC", "Dodací místo"]
+            # Hlavičky podle požadavku: datum, týden, množství, SCC, zbytek ad lib
+            headers = ["Datum", "Týden", "Množství", "SCC", "Dodací místo"]
             for col_num, header in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num, value=header)
                 cell.font = Font(bold=True)
                 cell.alignment = Alignment(horizontal='center')
 
+            # Připravíme data pro řazení
+            prepared_data = []
+            for delivery in self.delivery_schedules:
+                # Získáme položku (item) - pokud neexistuje, použijeme prázdný řetězec
+                item = delivery.get('Položka', '')
+                
+                # Zpracujeme datum pro řazení
+                date_str = delivery.get('Datum od', '')
+                date_for_sort = None
+                if date_str:
+                    try:
+                        date_parts = date_str.split(' ')[0].split('.')
+                        if len(date_parts) == 3:
+                            date_for_sort = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]))
+                    except (ValueError, IndexError):
+                        pass
+                
+                prepared_data.append({
+                    'item': item,
+                    'date_for_sort': date_for_sort or datetime.max,
+                    'delivery': delivery
+                })
+            
+            # Seřadíme data podle položky a data
+            prepared_data.sort(key=lambda x: (x['item'] or '', x['date_for_sort']))
+
             # Data
             row_num = 2
-            for delivery in self.delivery_schedules:
+            for item_data in prepared_data:
+                delivery = item_data['delivery']
                 date_from = delivery.get('Datum od', '')
                 week_num = self.get_week_number(date_from) if date_from else ""
                 scc_code = delivery.get('SCC', '')
                 scc_desc = self.get_scc_description(scc_code)
                 
-                # Format week number as number
-                try:
-                    week_num = int(week_num) if week_num else 0
-                except (ValueError, TypeError):
-                    week_num = 0
-                
-                # Format quantity as number, removing any leading quotes
-                quantity = delivery.get('Množství', '')
-                if isinstance(quantity, str):
-                    quantity = quantity.strip("'")
-                    try:
-                        quantity = float(quantity) if quantity else 0
-                    except (ValueError, TypeError):
-                        quantity = delivery.get('Množství', '')
-                
-                # Format SCC as number if possible
-                scc = delivery.get('SCC', '')
-                try:
-                    scc = int(scc) if scc.strip() else ''
-                except (ValueError, AttributeError):
-                    pass
-                
-                # Add week number
-                ws.cell(row=row_num, column=1, value=week_num)
-                
-                # Format date as Excel date - handle both with and without time
-                date_from = delivery.get('Datum od', '')
-                
+                # Datum (sloupec 1)
                 try:
                     if date_from:
                         # Remove time part if present
                         date_from = date_from.split(' ')[0]
                         date_from_obj = datetime.strptime(date_from, '%d.%m.%Y')
-                        ws.cell(row=row_num, column=2, value=date_from_obj).number_format = 'DD.MM.YYYY'
+                        ws.cell(row=row_num, column=1, value=date_from_obj).number_format = 'DD.MM.YYYY'
                 except Exception as e:
-                    # Log error silently
                     ws.cell(row=row_num, column=2, value=date_from.split(' ')[0] if date_from else '')
                 
-                # Add other data with proper formatting
-                # Format quantity as number
+                # Týden (sloupec 2)
                 try:
-                    if isinstance(quantity, (int, float)):
-                        qty_value = float(quantity)
+                    week_num = int(week_num) if week_num else 0
+                    ws.cell(row=row_num, column=2, value=week_num).number_format = '0'
+                except (ValueError, TypeError):
+                    ws.cell(row=row_num, column=3, value=0)
+                
+                # Množství (sloupec 3)
+                quantity = delivery.get('Množství', '')
+                try:
+                    if isinstance(quantity, str):
+                        quantity = quantity.strip("'")
+                        qty_value = float(quantity) if quantity else 0.0
                     else:
-                        qty_str = str(quantity).strip().replace("'", "")
-                        qty_value = float(qty_str) if qty_str.replace('.', '', 1).isdigit() else 0.0
-                    ws.cell(row=row_num, column=3, value=qty_value)
-                except (ValueError, AttributeError):
-                    ws.cell(row=row_num, column=3, value=0.0)
+                        qty_value = float(quantity) if quantity is not None else 0.0
+                    ws.cell(row=row_num, column=3, value=qty_value).number_format = '0'
+                except (ValueError, TypeError):
+                    ws.cell(row=row_num, column=4, value=0.0).number_format = '0'
                 
-                # Format text columns as text
-                ws.cell(row=row_num, column=4, value=str(delivery.get('Typ', ''))).number_format = '@'  # Typ as text
+                # SCC (sloupec 4)
+                scc_desc = self.get_scc_description(str(delivery.get('SCC', '')))
+                ws.cell(row=row_num, column=4, value=str(scc_desc)).number_format = '@'
                 
-                # Use SCC description instead of code and format as text
-                scc_desc = self.get_scc_description(str(scc))
-                ws.cell(row=row_num, column=5, value=str(scc_desc)).number_format = '@'  # SCC as text
+                # Dodací místo (sloupec 5)
+                ws.cell(row=row_num, column=5, value=str(self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')).number_format = '@'
                 
-                # Format delivery location as text
-                ws.cell(row=row_num, column=6, value=str(self.partner_info.get('Dodací adresa', '') or 'XTREME PRESSURE INJECTION JUAREZ, REC LOC 372, EL PASO, 79927')).number_format = '@'
                 row_num += 1
 
             # Apply number formatting to numeric columns
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                # Format quantity column (column 3) as number with no decimal places
+                # Format quantity column (column 2) as number with no decimal places
                 if row[2].value is not None:  # Column 3 (0-based index 2)
                     row[2].number_format = '0'
                 # Format week number column (column 1) as number with no decimal places
-                if row[0].value is not None:  # Column 1 (0-based index 0)
-                    row[0].number_format = '0'
+                if row[1].value is not None:  # Column 2 (0-based index 1)
+                    row[1].number_format = '0'
             
             # Automatické přizpůsobení šířky sloupců
             for col in ws.columns:

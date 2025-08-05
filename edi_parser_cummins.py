@@ -125,7 +125,7 @@ class EDIDelforCumminsParser:
             '1': 'Firm',
             '4': 'Forecast'
         }
-        return scc_map.get(scc_code, f'SCC-{scc_code}')
+        return scc_map.get(scc_code, f'{scc_code}')
 
     def parse_edi_file(self, content):
         lines = content.strip().split("'")
@@ -521,7 +521,7 @@ class EDIDelforCumminsParser:
             return ""
 
     def export_to_excel(self):
-        """Export delivery data to Excel with calendar weeks"""
+        """Export delivery data to Excel with calendar weeks, color-coded by part"""
         if not self.delivery_schedules:
             messagebox.showwarning("Upozornění", "Žádná data k exportu")
             return
@@ -531,25 +531,68 @@ class EDIDelforCumminsParser:
             ws = wb.active
             ws.title = "Dodávky"
 
-            # Headers with week number
-            headers = ["Týden", "Datum", "Položka", "Popis", "Množství", "Typ", "SCC", "Release", "Dodací místo"]
+            # Get unique part numbers and assign colors
+            unique_parts = list(set([item.get('Položka', '') for item in self.delivery_schedules if item.get('Položka')]))
+            # Generate distinct colors for each part
+            colors = [
+                'FFE6B8', 'B8D1E6', 'E6B8B8', 'B8E6C3', 'E6D5B8',
+                'D1B8E6', 'B8E6E6', 'E6B8D1', 'B8C3E6', 'E6E6B8',
+                'B8E6D1', 'E6B8E6', 'B8E6B8', 'E6C3B8', 'B8D1E6',
+                'E6B8C3', 'B8E6D9', 'E6B8D9', 'B8E6B8', 'E6B8FF'
+            ]
+            part_colors = {}
+            for i, part in enumerate(unique_parts):
+                part_colors[part] = colors[i % len(colors)]
+
+            # Headers in requested order: položka, datum, týden, množství, SCC, zbytek ad lib
+            headers = ["Položka", "Datum", "Týden", "Množství", "SCC", "Dodací místo"]
             for col_num, header in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num, value=header)
                 cell.font = Font(bold=True)
                 cell.alignment = Alignment(horizontal='center')
+                
+            # Add legend headers
+            legend_headers = ["Legenda:", "Položka", "Popis"]
+            for col_num, header in enumerate(legend_headers, 10):  # Start from column J
+                cell = ws.cell(row=1, column=col_num, value=header)
+                cell.font = Font(bold=True)
+                cell.alignment = Alignment(horizontal='center')
 
-            # Add data - sort by date from oldest to newest
-            def parse_date(date_str):
-                try:
-                    if '.' in date_str:
-                        return datetime.strptime(date_str, '%d.%m.%Y').date()
-                    else:
-                        return datetime.strptime(date_str, '%Y%m%d').date()
-                except:
-                    return datetime.min.date()
+            # Prepare data for sorting by item and date
+            prepared_data = []
+            for item in self.delivery_schedules:
+                # Get item number (Položka)
+                part_number = item.get('Položka', '')
+                
+                # Parse date for sorting
+                date_str = item.get('Datum', '')
+                date_for_sort = None
+                if date_str:
+                    try:
+                        if '.' in date_str:
+                            date_parts = date_str.split('.')
+                            if len(date_parts) == 3:
+                                date_for_sort = datetime(int(date_parts[2]), int(date_parts[1]), int(date_parts[0]))
+                        else:
+                            # Handle YYYYMMDD format if needed
+                            date_for_sort = datetime.strptime(date_str, '%Y%m%d')
+                    except (ValueError, IndexError):
+                        pass
+                
+                prepared_data.append({
+                    'part_number': part_number,
+                    'date_for_sort': date_for_sort or datetime.max,
+                    'item': item
+                })
             
+            # Sort by item and date
+            prepared_data.sort(key=lambda x: (str(x['part_number'] or ''), x['date_for_sort']))
+
+            # Add data to worksheet
             row_num = 2
-            for item in sorted(self.delivery_schedules, key=lambda x: parse_date(x.get('Datum', ''))):
+            for data in prepared_data:
+                item = data['item']
+                
                 # Get week number from date
                 week_num = self.get_week_number(item.get('Datum', ''))
                 
@@ -560,7 +603,7 @@ class EDIDelforCumminsParser:
                     try:
                         quantity = float(quantity) if quantity else 0
                     except (ValueError, TypeError):
-                        quantity = item.get('Množství', '')
+                        quantity = 0
                 
                 # Format week number as number
                 try:
@@ -568,99 +611,139 @@ class EDIDelforCumminsParser:
                 except (ValueError, TypeError):
                     week_num = 0
                 
-                # Format part number as number if possible
+                # Get part number
                 part_number = item.get('Položka', '')
-                try:
-                    if str(part_number).strip():  # Only convert if not empty
-                        part_number = int(part_number)
-                    else:
-                        part_number = None
-                except (ValueError, AttributeError, TypeError):
-                    part_number = str(part_number)  # Keep as string if can't convert to int
                 
-                # Format release as number if possible
-                release = item.get('Release', '')
-                try:
-                    if str(release).strip():  # Only convert if not empty
-                        release = int(release)
-                    else:
-                        release = None
-                except (ValueError, AttributeError, TypeError):
-                    release = str(release)  # Keep as string if can't convert to int
+                # Get SCC description
+                scc = item.get('SCC', '')
+                scc_desc = self.get_scc_description(str(scc)) if scc else ''
                 
-                # Add week number and date in the first two columns
-                ws.cell(row=row_num, column=1, value=week_num)
+                # Get delivery location
+                delivery_location = str(self.partner_info.get('Dodací adresa', '') or '')
+                if not delivery_location.strip():
+                    delivery_location = 'Cummins Inc., 500 Jackson Street, Columbus, IN 47201, USA'  # Default Cummins address
                 
-                # Format date as Excel date
+                # Get part description for legend
+                part_description = item.get('Popis', '')
+                
+                # Get color for this part
+                part_color = part_colors.get(part_number, 'FFFFFF')  # Default to white if part not found
+                
+                # 1. Položka (as text with colored background and part number as text)
+                cell = ws.cell(row=row_num, column=1, value=str(part_number))
+                cell.number_format = '@'
+                cell.fill = openpyxl.styles.PatternFill(start_color=part_color, end_color=part_color, fill_type='solid')
+                cell.font = Font(color='000000')  # Ensure text is black for visibility
+                
+                # 2. Datum (formatted date) - not colored
                 date_str = item.get('Datum', '')
                 try:
                     if date_str:
-                        date_obj = datetime.strptime(date_str, '%d.%m.%Y')
-                        ws.cell(row=row_num, column=2, value=date_obj).number_format = 'DD.MM.YYYY'
+                        if '.' in date_str:
+                            date_obj = datetime.strptime(date_str, '%d.%m.%Y')
+                        else:
+                            date_obj = datetime.strptime(date_str, '%Y%m%d')
+                        cell = ws.cell(row=row_num, column=2, value=date_obj)
+                        cell.number_format = 'DD.MM.YYYY'
                     else:
-                        ws.cell(row=row_num, column=2, value='')
-                except (ValueError, TypeError):
-                    ws.cell(row=row_num, column=2, value=date_str)
+                        cell = ws.cell(row=row_num, column=2, value='')
+                except:
+                    cell = ws.cell(row=row_num, column=2, value=date_str)
                 
-                # Part number - format as number if possible
-                if part_number is not None and part_number != '':
-                    if isinstance(part_number, (int, float)):
-                        ws.cell(row=row_num, column=3, value=part_number).number_format = '0'
+                # 3. Týden (week number) - not colored
+                cell = ws.cell(row=row_num, column=3, value=week_num)
+                cell.number_format = '0'
+                
+                # 4. Množství (quantity as number) - not colored
+                try:
+                    if isinstance(quantity, (int, float)):
+                        qty_value = float(quantity)
                     else:
-                        ws.cell(row=row_num, column=3, value=str(part_number)).number_format = '@'  # Text format if not a number
-                else:
-                    ws.cell(row=row_num, column=3, value='')
+                        qty_str = str(quantity).strip().replace("'", "")
+                        qty_value = float(qty_str) if qty_str.replace('.', '', 1).isdigit() else 0.0
+                    cell = ws.cell(row=row_num, column=4, value=qty_value)
+                    cell.number_format = '0'
+                except (ValueError, AttributeError):
+                    cell = ws.cell(row=row_num, column=4, value=0.0)
+                    cell.number_format = '0'
                 
-                # Format text columns as text
-                ws.cell(row=row_num, column=4, value=str(item.get('Popis', ''))).number_format = '@'  # Popis as text
-                ws.cell(row=row_num, column=5, value=quantity)  # Quantity as number
-                ws.cell(row=row_num, column=6, value=str(item.get('Typ', ''))).number_format = '@'  # Typ as text
-                ws.cell(row=row_num, column=7, value=str(item.get('SCC', ''))).number_format = '@'  # SCC as text
+                # 5. SCC (as text) - not colored
+                cell = ws.cell(row=row_num, column=5, value=str(scc_desc))
+                cell.number_format = '@'
                 
-                # Release - format as number if possible
-                if release is not None and release != '':
-                    if isinstance(release, (int, float)):
-                        ws.cell(row=row_num, column=8, value=release).number_format = '0'
-                    else:
-                        ws.cell(row=row_num, column=8, value=str(release)).number_format = '@'  # Text format if not a number
-                else:
-                    ws.cell(row=row_num, column=8, value='')
-                    
-                # Get delivery location - ensure we have a non-empty string
-                dodaci_misto = str(self.partner_info.get('Dodací adresa', '') or '').strip()
-                ws.cell(row=row_num, column=9, value=dodaci_misto).number_format = '@'  # Dodací místo as text
+                # 6. Dodací místo (delivery address as text) - not colored
+                cell = ws.cell(row=row_num, column=6, value=delivery_location)
+                cell.number_format = '@'
+                
                 row_num += 1
 
             # Apply number formatting to numeric columns
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                # Skip empty rows or rows with insufficient columns
+                if len(row) < 6:  # We need at least 6 columns (0-5)
+                    continue
+                    
                 # Format week number (column 1) as number with no decimal places
                 if row[0].value is not None and row[0].value != '':  # Column 1 (0-based index 0)
                     if isinstance(row[0].value, (int, float)):
                         row[0].number_format = '0'
-                    
-                # Format quantity (column 5) as number with no decimal places
-                if row[4].value is not None and row[4].value != '':  # Column 5 (0-based index 4)
-                    if isinstance(row[4].value, (int, float)):
-                        row[4].number_format = '0'
-                        
+                
                 # Format part number (column 3) as number with no decimal places if it's a number
-                if row[2].value is not None and row[2].value != '':  # Column 3 (0-based index 2)
+                if len(row) > 2 and row[2].value is not None and row[2].value != '':  # Column 3 (0-based index 2)
                     if isinstance(row[2].value, (int, float)):
                         row[2].number_format = '0'
-                        
-                # Format release (column 8) as number with no decimal places if it's a number
-                if row[7].value is not None and row[7].value != '':  # Column 8 (0-based index 7)
-                    if isinstance(row[7].value, (int, float)):
-                        row[7].number_format = '0'
+                
+                # Format quantity (column 4) as number with no decimal places
+                if len(row) > 4 and row[4].value is not None and row[4].value != '':  # Column 5 (0-based index 4)
+                    if isinstance(row[4].value, (int, float)):
+                        row[4].number_format = '0'
             
-            # Auto-adjust column widths
+            # Add legend headers (only in columns J and K)
+            ws.cell(row=1, column=10, value="Legenda:").font = Font(bold=True)
+            ws.cell(row=1, column=11, value="Popis").font = Font(bold=True)
+            # Clear any existing header in column L
+            if ws.cell(row=1, column=12).value == "Popis":
+                ws.cell(row=1, column=12, value="")
+            
+            # Add legend items starting from row 2
+            legend_row = 2
+            for part_number, color in part_colors.items():
+                # Get part description
+                part_description = ''
+                for item in self.delivery_schedules:
+                    if item.get('Položka') == part_number:
+                        part_description = item.get('Popis', '')
+                        break
+                
+                # Set column J width to 0.75 inches (approximately 8.43 units in Excel)
+                ws.column_dimensions['J'].width = 10
+                
+                # Create a cell with colored background and part number as text
+                legend_cell = ws.cell(row=legend_row, column=10, value=str(part_number))
+                legend_cell.fill = openpyxl.styles.PatternFill(
+                    start_color=color, end_color=color, fill_type='solid')
+                legend_cell.font = Font(color='000000', bold=True)  # Black text, bold
+                legend_cell.alignment = Alignment(horizontal='center')
+                
+                # Part description in next column
+                ws.cell(row=legend_row, column=11, value=part_description)
+                
+                legend_row += 1
+            
+            # Auto-adjust column widths for all columns
             for col in ws.columns:
                 max_length = 0
-                column = col[0].column_letter
+                column_letter = get_column_letter(col[0].column)
+                
+                # Skip the color swatch column (J) for width adjustment
+                if column_letter == 'J':
+                    ws.column_dimensions[column_letter].width = 10  # Fixed width for color swatch (0.75")
+                    continue
+                    
                 for cell in col:
                     try:
                         # For dates, use the formatted string length
-                        if cell.is_date:
+                        if hasattr(cell, 'is_date') and cell.is_date:
                             cell_value = cell.value.strftime('%d.%m.%Y') if cell.value else ''
                         else:
                             cell_value = str(cell.value) if cell.value is not None else ''
@@ -669,8 +752,17 @@ class EDIDelforCumminsParser:
                             max_length = len(cell_value)
                     except:
                         pass
-                adjusted_width = (max_length + 2)
-                ws.column_dimensions[column].width = min(adjusted_width, 30)
+                
+                # Set a reasonable maximum width to prevent extremely wide columns
+                adjusted_width = min((max_length + 2), 30)
+                
+                # Set minimum width for better readability
+                if column_letter in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:  # Main data columns
+                    adjusted_width = max(adjusted_width, 12)
+                elif column_letter in ['K', 'L']:  # Legend columns
+                    adjusted_width = max(adjusted_width, 20)
+                
+                ws.column_dimensions[column_letter].width = adjusted_width
 
             # Add a summary sheet with just week and quantity
             ws_summary = wb.create_sheet("Přehled")

@@ -30,8 +30,10 @@ class EDIUnifiedParser:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
     def load_file(self):
+        initial_dir = r"M:\APLIKACE\Edirex\INArchiv"
         filepath = filedialog.askopenfilename(
             title="Vyberte EDI soubor",
+            initialdir=initial_dir if os.path.exists(initial_dir) else ".",
             filetypes=[("EDI files", "*.edi"), ("All files", "*.*")]
         )
         
